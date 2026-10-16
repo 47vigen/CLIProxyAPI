@@ -52,17 +52,16 @@ type WeightedRoundRobinSelector struct {
 }
 
 // UnwrapWeightedRoundRobinSelector extracts the underlying *WeightedRoundRobinSelector
-// from a bare selector or a SessionAffinitySelector wrapper.
+// from a bare selector or the default path through the routing wrappers.
 func UnwrapWeightedRoundRobinSelector(selector Selector) *WeightedRoundRobinSelector {
-	if weighted, ok := selector.(*WeightedRoundRobinSelector); ok {
-		return weighted
-	}
 	if affinity, ok := selector.(*SessionAffinitySelector); ok && affinity != nil {
-		if weighted, okFallback := affinity.fallback.(*WeightedRoundRobinSelector); okFallback {
-			return weighted
-		}
+		selector = affinity.fallback
 	}
-	return nil
+	if strategies, ok := selector.(*ProviderStrategySelector); ok && strategies != nil {
+		selector = strategies.Default
+	}
+	weighted, _ := selector.(*WeightedRoundRobinSelector)
+	return weighted
 }
 
 type smoothWeightedState struct {

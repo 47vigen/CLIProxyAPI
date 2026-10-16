@@ -170,6 +170,9 @@ func newAuthScheduler(selector Selector) *authScheduler {
 
 // selectorStrategy maps a selector implementation to the scheduler semantics it should emulate.
 func selectorStrategy(selector Selector) schedulerStrategy {
+	if strategies, ok := selector.(*ProviderStrategySelector); ok {
+		selector = strategies.Default
+	}
 	switch selector.(type) {
 	case *FillFirstSelector:
 		return schedulerStrategyFillFirst

@@ -172,6 +172,47 @@ func (s *ProviderStrategySelector) selectorFor(provider string, auths []*Auth) S
 	return s.Default
 }
 
+// forProviders resolves default-only and single-provider requests before scheduling.
+// Requests spanning an override and other providers still dispatch on the candidates.
+func (s *ProviderStrategySelector) forProviders(providers []string) Selector {
+	var first string
+	var mixed, overridden bool
+	for _, provider := range providers {
+		key := canonicalSchedulingProvider(provider)
+		if key == "" {
+			continue
+		}
+		if first == "" {
+			first = key
+		} else if first != key {
+			mixed = true
+		}
+		overridden = overridden || s.ByProvider[key] != nil
+	}
+	if !overridden {
+		return s.Default
+	}
+	if mixed {
+		return s
+	}
+	return s.ByProvider[first]
+}
+
+func selectorForProviders(selector Selector, providers []string) Selector {
+	switch s := selector.(type) {
+	case *ProviderStrategySelector:
+		return s.forProviders(providers)
+	case *SessionAffinitySelector:
+		if strategies, ok := s.fallback.(*ProviderStrategySelector); ok {
+			// The per-request fallback changes; the affinity cache and matcher stay shared.
+			resolved := *s
+			resolved.fallback = strategies.forProviders(providers)
+			return &resolved
+		}
+	}
+	return selector
+}
+
 // RoutingStrategyName returns the canonical name of a routing strategy, accepting the historical aliases.
 func RoutingStrategyName(name string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
