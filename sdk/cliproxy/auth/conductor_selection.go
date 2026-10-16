@@ -2310,11 +2310,15 @@ func (m *Manager) CloseExecutionSession(sessionID string) {
 	}
 }
 
-func (m *Manager) useSchedulerFastPath() bool {
+func (m *Manager) useSchedulerFastPath(providers ...string) bool {
 	if m == nil || m.scheduler == nil {
 		return false
 	}
-	return isBuiltInSelector(m.Selector())
+	selector := m.Selector()
+	if strategies, ok := selector.(*ProviderStrategySelector); ok {
+		return isBuiltInSelector(strategies.Default) && strategies.forProviders(providers) == strategies.Default
+	}
+	return isBuiltInSelector(selector)
 }
 
 func shouldRetrySchedulerPick(err error) bool {
@@ -2436,7 +2440,7 @@ func (m *Manager) pickNextLegacy(ctx context.Context, provider, model string, op
 	pluginScheduler, schedulerAcross := m.snapshotPluginScheduler()
 
 	m.mu.RLock()
-	selector := m.selector
+	selector := selectorForProviders(m.selector, []string{provider})
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = selectionArgForSelector(selector, model)
 	executor, okExecutor := m.executorLocked(provider)
 	if !okExecutor {
@@ -2795,7 +2799,7 @@ func (m *Manager) pickNextUncounted(ctx context.Context, provider, model string,
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = provider
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.hasPluginScheduler() || !m.useSchedulerFastPath(provider) {
 		return m.pickNextLegacy(ctx, provider, model, opts, tried)
 	}
 	eligibility := authSelectionEligibilityForRequest(ctx, opts)
@@ -2909,7 +2913,7 @@ func (m *Manager) HasAlternativeTargetForModel(ctx context.Context, providers []
 	if len(candidates) == 0 {
 		return false
 	}
-	available, _, errAvailable := m.availableAuthsForSelector(ctx, m.selector, candidates, "mixed", model, time.Now(), false, opts.Headers)
+	available, _, errAvailable := m.availableAuthsForSelector(ctx, selectorForProviders(m.selector, providers), candidates, "mixed", model, time.Now(), false, opts.Headers)
 	return errAvailable == nil && len(available) > 0
 }
 
@@ -2940,7 +2944,7 @@ func (m *Manager) pickNextMixedLegacy(ctx context.Context, providers []string, m
 	pluginScheduler, schedulerAcross := m.snapshotPluginScheduler()
 
 	m.mu.RLock()
-	selector := m.selector
+	selector := selectorForProviders(m.selector, providers)
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = selectionArgForSelector(selector, model)
 	candidates := make([]*Auth, 0, len(m.auths))
 	modelKey := strings.TrimSpace(model)
@@ -3145,7 +3149,7 @@ func (m *Manager) pickNextMixedUncounted(ctx context.Context, providers []string
 	opts.Metadata[cliproxyexecutor.SessionAffinityProviderMetadataKey] = "mixed"
 	opts.Metadata[cliproxyexecutor.SessionAffinityModelMetadataKey] = model
 
-	if m.hasPluginScheduler() || !m.useSchedulerFastPath() {
+	if m.hasPluginScheduler() || !m.useSchedulerFastPath(providers...) {
 		return m.pickNextMixedLegacy(ctx, providers, model, opts, tried)
 	}
 
@@ -3292,7 +3296,7 @@ func (m *Manager) earliestPoolCooldownForModelAt(ctx context.Context, providers 
 	if m == nil {
 		return time.Time{}, false, false
 	}
-	excludeZeroWeight := selectorExcludesZeroWeight(m.Selector())
+	excludeZeroWeight := selectorExcludesZeroWeight(selectorForProviders(m.Selector(), providers))
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	eligibility := authSelectionEligibilityForRequest(ctx, opts)
